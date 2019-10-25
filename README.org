@@ -1,0 +1,23 @@
+* cadlaw
+** About
+A tool to quickly insert canadian legislation and regulations into an emacs buffer. It has the built in capacity render them in raw text format, emacs propertized format, and org mode format. =cadlaw-render-format-plist= can be extended with new formats.
+
+** Installation
+Clone this repository and add the lisp directory to your load path.
+Then, require it, add your regs/legs and go!
+
+#+BEGIN_SRC bash
+cd /path/to/cadlaw/../
+clone https://github.com/alexjgriffith/cadlaw.git
+#+END_SRC
+
+
+#+BEGIN_SRC emacs-lisp
+    (add-to-list 'load-path "/path/to/cadlaw")
+    (require 'cadlaw)   
+    (cadlaw-init '(tplr . "SOR-2011-177.xml"))
+#+END_SRC
+
+** Example
+To insert section 11 of the TPLR into the current buffer at point use:
+=M-x cadlaw-insert-section RET tplr RET 11=

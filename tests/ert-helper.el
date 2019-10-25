@@ -1,0 +1,1 @@
+(load-file "cadlaw.el")
