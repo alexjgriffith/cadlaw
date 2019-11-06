@@ -130,12 +130,13 @@ LAW is a key in the `cadlaw-law-plist'"
     (progn
       (message (format "Downloading %s from %s." law (cadlaw--make-endpoint law)))
       (cadlaw--dl-ess-raw-sync law)
-      (cdr (assoc law cadlaw-ess-raw))))
+      (cdr (assoc law cadlaw-ess-raw-alist))))
    (t (error (format "%s not in `cadlaw-ess-raw-alist' or `cadlaw-law-plist'" law)))))
 
 (defun cadlaw--ess-get-body (law)
   "Get the body, either saved as `cadlaw-ess-raw' or from `cadlaw-endpoint'."
-  (assert (equalp (not cadlaw-ess-raw) nil) t "XML has not finished downloading")
+  (assert (equalp (not (cdr (assoc law cadlaw-ess-raw-alist))) nil) t
+          "XML has not finished downloading")
   ;; (when (not cadlaw-ess-raw))
   (cdr (assoc 'Body (cdar (cadlaw--ess-get-law law)))))
 
@@ -379,7 +380,7 @@ FORMAT format to use, see `cadlaw-render-format-plist'"
 (defun cadlaw-insert-section (law section)
   "Interactive function for inserting LAW SECTION into current emacs buffer at point."
   (interactive "sLaw: \nsSection: ")
-  (insert (cadlaw-apply-render (cadtrp-ess-get-section* (intern-soft law) section) "" emacs)))
+  (insert (cadlaw-apply-render (cadtrp-ess-get-section* (intern-soft law) section) "" 'emacs)))
 
 (provide 'cadlaw)
 ;;; cadlaw.el ends here
