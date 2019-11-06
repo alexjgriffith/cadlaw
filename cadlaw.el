@@ -46,7 +46,7 @@
   :group 'external)
 
 (defvar cadlaw-law-plist
-  '(tpr-psa "SOR-2019-107.xml" excise-act "E-14.1.xml")
+  '(excise-act "E-14.1.xml")
   "Holds links to the regs. See also` cadlaw-endpoint-prefix'.")
 
 (defcustom cadlaw-endpoint-prefix "https://laws-lois.justice.gc.ca/eng/XML/"

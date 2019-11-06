@@ -15,9 +15,9 @@ clone https://github.com/alexjgriffith/cadlaw.git
 #+BEGIN_SRC emacs-lisp
     (add-to-list 'load-path "/path/to/cadlaw")
     (require 'cadlaw)   
-    (cadlaw-init '(tplr . "SOR-2011-177.xml"))
+    (cadlaw-init '(cpla ."C-38.xml"))
 #+END_SRC
 
 ** Example
 To insert section 11 of the TPLR into the current buffer at point use:
-=M-x cadlaw-insert-section RET tplr RET 11=
+=M-x cadlaw-insert-section RET cpla RET 11=
