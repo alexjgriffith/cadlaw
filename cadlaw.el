@@ -29,7 +29,7 @@
 ;; By default it is setup to parse the Tobacco Product Regulations
 
 ;; (cadlaw-dl-ess-raw) ;; download regs
-;; (insert (cadlaw-apply-render (cadtrp-ess-get-section* "89") nil))
+;; (insert (cadlaw-apply-render (cadlaw-ess-get-section* "89") nil))
 
 ;; TODO
 ;; - [ ] Test this out with other regulations
@@ -60,7 +60,7 @@
   :type 'string)
 
 (defvar cadlaw-ess-raw-alist '()
-  "Variable where the Regulations are stored as ess. 
+  "Variable where the Regulations are stored as ess.
 Uses the same names as those defined in `cadlaw-law-plist'.")
 
 (defun cadlaw--make-endpoint (law)
@@ -150,7 +150,7 @@ E.g. ((sample \"A\") \" B\") -> \"A B\""
                     list
                     ""))))
 
-(defun cadtrp-ess-get-section (law section-label &optional searchable return-heading?)
+(defun cadlaw-ess-get-section (law section-label &optional searchable return-heading?)
   "Get a single section from the Regulations.
 For the nested equivielent (i.e. normal use case) see `cadlaw-ess-get-section*'.
 SECTION-LABEL the name of the section as a string
@@ -178,13 +178,13 @@ RETURN-HEADING bool, if true return the related headings rather than the section
         heading
         ret)))
 
-(defun cadtrp-ess-get-section* (law &rest sections)
+(defun cadlaw-ess-get-section* (law &rest sections)
   "Search through Regulations to find SECTIONS.
 SECTIONS are strings."
   (let ((searchable (cadlaw--ess-get-body law))
         (section (pop sections)))
     (while section
-      (setq searchable (cadtrp-ess-get-section law section (cddr searchable)))
+      (setq searchable (cadlaw-ess-get-section law section (cddr searchable)))
       (setq section (pop sections)))
     searchable))
 
@@ -339,7 +339,7 @@ FORMAT format to use, see `cadlaw-render-format-plist'"
 ELEMENT section to render.
 PREFIX text to appear before rendering.
 FORMAT format to use, see `cadlaw-render-format-plist'"
-  
+
   (assert (equal 'Paragraph (car element)))
   (let ((text (cadlaw--list-to-string (cddr (assoc 'Text (cddr element)))))
         (label (cadlaw--list-to-string (cddr (assoc 'Label (cddr element))))))
@@ -351,7 +351,7 @@ FORMAT format to use, see `cadlaw-render-format-plist'"
 ELEMENT section to render.
 PREFIX text to appear before rendering.
 FORMAT format to use, see `cadlaw-render-format-plist'"
-  
+
   (assert (equal 'Definition (car element)))
   (let ((text (cadlaw--list-to-string (cddr (assoc 'Text (cddr element)))))
         (label (cadlaw--list-to-string (cddr (assoc 'Label (cddr element))))))
@@ -377,10 +377,158 @@ FORMAT format to use, see `cadlaw-render-format-plist'"
           ((equalp type 'Section) (cadlaw--render-section element prefix format))
           ((equalp type 'Definition) (cadlaw--render-definition element prefix format)))))
 
+(defun cadlaw--alphabet-sequence (start &optional end)
+  "Create an alphabetic list from START to END."
+  (let* ((alphabet (split-string "abcdefghijklmnopqrstuvwxyz" ""))
+        (collect nil)
+        (within nil)
+        (letter (pop alphabet)))
+    (if (not end)
+        (list start)
+      (while letter
+        (if within
+            (progn
+              (push letter collect)
+              (if (string-equal end letter) (setq within nil)))
+          (if (string-equal start letter)
+              (progn (push letter collect)
+                     (setq within 't))))
+        (setq letter (pop alphabet)))
+      (if within nil (reverse collect)))))
+
+(defvar cadlaw--sample-sections
+  '(("7 (1)" (("17" "1")))
+    ("65 a-b"(("65" "a") ("65" "b")))
+    ("60 (2) a-c" (("60" "2" "a") ("60" "2" "b" "60" "2" "c")))
+    ("60 (2) d" (("60" "2" "d"))))
+    "Example sections.")
+
+(defun cadlaw--parse-section-string (section-string)
+  "Break SECTION-STRING into sections subsections and paragraph ranges."
+  (let* ((char-type
+          (lambda (string-1)
+            "Determine STRING-1 type or return 't."
+            (let* ((options '((num (lambda (char) (string-match-p "[0-9]" char)))
+                              (open (lambda (char) (string-match-p "(" char)))
+                              (close (lambda (char) (string-match-p ")" char)))
+                              (lower (lambda (char) (string-match-p "[a-z]" char)))
+                              (dash (lambda (char) (string-match-p "-" char)))
+                              (space (lambda (char) (string-match-p " " char)))
+                              (end (lambda (char) (string-match-p "\\." char)))))
+                   (type (remove-if-not (lambda (op-name)
+                                          (funcall (cadr op-name) string-1)) options)))
+              (or (caar type) 't))))
+         (states   '((pre-section (num in-section add-char-to-string) (t error nothing))
+                     (in-section (num in-section add-char-to-string)
+                                 (space post-section set-section)
+                                 (open post-section set-section)
+                                 (end to-paragraph set-section)
+                                 (t error nothing))
+                     (post-section (space post-section nothing)
+                                   (open post-section nothing)
+                                   (num in-subsection add-char-to-string)
+                                   (lower from-paragraph add-char-to-string)
+                                   (end post-section nothing)
+                                   (t error nothing))
+                     (in-subsection (num in-subsection add-char-to-string)
+                                    (space post-subsection set-subsection)
+                                    (end from-paragraph set-subsection)
+                                    (close post-subsection set-subsection)
+                                    (t error nothing))
+                     (from-paragraph (lower from-paragraph add-char-to-string)
+                                     (dash to-paragraph set-from)
+                                     (end to-paragraph set-from)
+                                     (t error nothing))
+                     (to-paragraph (lower to-paragraph add-char-to-string)
+                                   (end to-paragraph set-to)
+                                   (t error nothing))
+                     (post-subsection (space post-subsection nothing)
+                                      (lower from-paragraph add-char-to-string)
+                                      (end post-subsection nothing)
+                                      (t error nothing))
+                     (post-paragraph (space post-paragraph nothing)
+                                     (end post-paragraph nothing)
+                                     (t error nothing))))
+         (state 'pre-section)
+        (section-string (split-string-and-unquote (concat section-string ".") ""))
+        (active-string '())
+        section subsection to from
+        (char (pop section-string)))
+    (while char
+      (destructuring-bind
+          (next-state operation)
+          (cdr (assoc (funcall char-type char) (cdr (assoc state states))))
+        (pcase (list operation)
+          ('(nothing) 't)
+          ('(add-char-to-string) (push char active-string))
+          ('(set-section)
+           (progn
+             (setq section (apply 'concat (reverse active-string)))
+             (setq active-string '())))
+          ('(set-subsection)
+           (progn
+             (setq subsection (apply 'concat (reverse active-string)))
+             (setq active-string '())))
+          ('(set-to)
+           (progn
+             (setq to (apply 'concat (reverse active-string)))
+             (setq active-string '())))
+          ('(set-from)
+           (progn
+             (setq from (apply 'concat (reverse active-string)))
+             (setq active-string '()))))
+        (setq state next-state)
+        (setq char (pop section-string))))
+    (list 'section section 'subsection subsection 'from from 'to to)))
+
+(defun cadlaw--break-paragraph-range (section-string)
+  "Break SECTION-STRING paragraph range into a list."
+    (let* ((parsed (cadlaw--parse-section-string section-string))
+           (section (plist-get parsed 'section))
+           (subsection (plist-get parsed 'subsection))
+           (from (plist-get parsed 'from))
+           (to (plist-get parsed 'to)))
+      (cond ((and (not from) (not to)) (list (list section subsection nil)))
+             ((and from (not to)) (list (list section subsection from)))
+             ((and to from)(mapcar (lambda (paragraph)
+                                     (list section subsection paragraph))
+                                   (cadlaw--alphabet-sequence from to))))))
+
+(defun cadlaw--filter-paragraphs (elements to from)
+    (let* ((paragraphs (mapcar (lambda(x)
+                                 (concat "(" x ")"))
+                               (cadlaw--alphabet-sequence from to))))
+      ;;(pp paragraphs)
+      (if (not from)
+          elements
+        (remove-if (lambda (info)
+                     (when (and (listp info)
+                                (symbolp (car info))
+                                (equal 'Paragraph (car info)))
+                       (let ((label (assoc 'Label info)))
+                         (and (listp label)
+                              (caddr label)
+                              (not (member (caddr label) paragraphs))))))
+                   elements))))
+
+(defun cadlaw-insert (law section-string)
+  "Interactive function for inserting LAW SECTION-STRING into current emacs buffer at point.
+SECTION-STRING example:\"1 (2) a-c\""
+
+    (interactive "sLaw: \nsSection: ")
+    (let* ((parsed (cadlaw--parse-section-string section-string))
+          (section (plist-get parsed 'section))
+          (subsection (when (plist-get parsed 'subsection)
+                        (format "(%s)" (plist-get parsed 'subsection))))
+          (from (plist-get parsed 'from))
+          (to (plist-get parsed 'to))
+          (elements (cadlaw-ess-get-section* 'tpr section subsection)))
+      (insert (cadlaw-apply-render (cadlaw--filter-paragraphs elements to from) "" 'emacs))))
+
 (defun cadlaw-insert-section (law section)
   "Interactive function for inserting LAW SECTION into current emacs buffer at point."
   (interactive "sLaw: \nsSection: ")
-  (insert (cadlaw-apply-render (cadtrp-ess-get-section* (intern-soft law) section) "" 'emacs)))
+  (insert (cadlaw-apply-render (cadlaw-ess-get-section* (intern-soft law) section) "" 'emacs)))
 
 (provide 'cadlaw)
 ;;; cadlaw.el ends here
