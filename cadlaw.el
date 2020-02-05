@@ -40,16 +40,18 @@
 
 ;;; Code:
 
+(require 'cl)
+
 (defgroup cadlaw nil
   "External functions to parse the Tobacco Product Regulations"
   :prefix "cadlaw-"
   :group 'external)
 
 (defvar cadlaw-law-plist
-  '(excise-act "E-14.1.xml")
+  '((excise-act eng) "E-14.1.xml")
   "Holds links to the regs. See also` cadlaw-endpoint-prefix'.")
 
-(defcustom cadlaw-endpoint-prefix "https://laws-lois.justice.gc.ca/eng/XML/"
+(defcustom cadlaw-endpoint-prefix "https://laws-lois.justice.gc.ca/%s/XML/"
   "Prefix for the source for the law."
   :group 'cadlaw
   :type 'string)
@@ -59,19 +61,46 @@
   :group 'cadlaw
   :type 'string)
 
+
 (defvar cadlaw-ess-raw-alist '()
   "Variable where the Regulations are stored as ess.
 Uses the same names as those defined in `cadlaw-law-plist'.")
 
-(defun cadlaw--make-endpoint (law)
+
+(defun cadlaw--plist-to-alist (plist)
+  (let ((return nil)
+        (element nil)
+        (first (pop plist))
+        (second (pop plist)))
+    (while (and first second)
+      (push second element)
+      (push first element)
+      (push element return)
+      (setq element nil)
+      (setq first (pop plist))
+      (setq second (pop plist)))
+    (reverse return)))
+
+(defun cadlaw--plist-get (plist prop)
+  (let ((alist (cadlaw--plist-to-alist plist)))
+    (cadr (assoc prop alist))))
+
+(defun cadlaw--make-endpoint (law language)
   "Make endpoint from LAW index in `cadlaw-law-plist'."
-  (concat cadlaw-endpoint-prefix (plist-get cadlaw-law-plist law)))
+  (let ((endpoint (concat (format cadlaw-endpoint-prefix language) (cadlaw--plist-get cadlaw-law-plist (list law language)))))
+    (message "make-endpoint")
+    (message endpoint)
+    (message (pp (list law language)))
+    (message (pp cadlaw-law-plist))
+    (message (plist-get cadlaw-law-plist (list law language)))
+    endpoint
+  ))
 
 (defun cadlaw--make-buffer-name (law)
   "Make buffer name from LAW index in `cadlaw-law-plist'."
   (concat cadlaw-xml-buffer-prefix (plist-get cadlaw-law-plist law)))
 
-(defun cadlaw--retrieve-callback (_status law)
+(defun cadlaw--retrieve-callback (_status law language)
   "Parse the Regulations.
 Parses XML to ESS and stores the result in `cadlaw-ess-raw-plist'
 _STATUS is unused
@@ -85,17 +114,17 @@ LAW key in `cadlaw-ess-raw-plist'"
       (erase-buffer)
       (insert str)
       (message (concat "Copied XML data to " new-buffer))
-      (add-to-list 'cadlaw-ess-raw-alist `(,law . ,(xml-parse-region))))))
+      (add-to-list 'cadlaw-ess-raw-alist `(,(list law language) . ,(xml-parse-region))))))
 
-(defun cadlaw--dl-ess-raw (law)
+(defun cadlaw--dl-ess-raw (law language)
   "Download the Regulations.
 LAW is a key in the `cadlaw-law-plist'"
-  (url-retrieve (cadlaw--make-endpoint law) #'cadlaw--retrieve-callback (list law)))
+  (url-retrieve (cadlaw--make-endpoint law language) #'cadlaw--retrieve-callback (list law language)))
 
-(defun cadlaw--dl-ess-raw-sync (law)
+(defun cadlaw--dl-ess-raw-sync (law language)
   "Download the Regulations synchronously.
 LAW is a key in the `cadlaw-law-plist'"
-  (let* ((endpoint (cadlaw--make-endpoint law))
+  (let* ((endpoint (cadlaw--make-endpoint law language))
          (buffer (url-retrieve-synchronously endpoint)))
     (with-current-buffer buffer
       (cadlaw--retrieve-callback 200 law))))
@@ -115,30 +144,37 @@ LAW is a key in the `cadlaw-law-plist'"
   "Download all law in `cadlaw-law-plist'.
 ENDPOINTS are a cons (key, law string) that is added to
 `cadlaw-law-plist before downloading.'"
-  (mapc (lambda (endpoint) (plist-put cadlaw-law-plist (car endpoint) (cdr endpoint))) endpoints)
-  (let ((laws (cadlaw--get-keys cadlaw-law-plist)))
-    (mapc (lambda (law) (cadlaw--dl-ess-raw law)) laws)))
+  (mapc (lambda (endpoint)
+          (plist-put cadlaw-law-plist (car endpoint) (cdr endpoint)))
+        endpoints)
+  (let ((saved-endpoints (cadlaw--plist-to-alist cadlaw-law-plist)))
+    (mapc (lambda (endpoint)
+            (destructuring-bind ((law language) string)
+                                endpoint
+                                (cadlaw--dl-ess-raw law language)))
+            saved-endpoints)))
 
-(defun cadlaw--ess-get-law (law)
+(defun cadlaw--ess-get-law (law language)
   "Get the law form the `cadlaw-ess-raw-alist'.
 If there is no law it will check `cadlaw-law-alist'.
 LAW is a key in the `cadlaw-law-plist'"
   (cond
-   ((member law (mapcar #'car cadlaw-ess-raw-alist))
+   ((member (list law language) (mapcar #'car cadlaw-ess-raw-alist))
     (cdr (assoc law cadlaw-ess-raw-alist)))
-   ((plist-member cadlaw-law-plist law)
+   ((plist-member cadlaw-law-plist (list law language))
     (progn
-      (message (format "Downloading %s from %s." law (cadlaw--make-endpoint law)))
-      (cadlaw--dl-ess-raw-sync law)
-      (cdr (assoc law cadlaw-ess-raw-alist))))
-   (t (error (format "%s not in `cadlaw-ess-raw-alist' or `cadlaw-law-plist'" law)))))
+      (message (format "Downloading %s %s from %s." language law
+                       (cadlaw--make-endpoint law language)))
+      (cadlaw--dl-ess-raw-sync law language)
+      (cdr (assoc (list law language) cadlaw-ess-raw-alist))))
+   (t (error (format "%s not in `cadlaw-ess-raw-alist' or `cadlaw-law-plist'" (list law language))))))
 
-(defun cadlaw--ess-get-body (law)
+(defun cadlaw--ess-get-body (law language)
   "Get the body, either saved as `cadlaw-ess-raw' or from `cadlaw-endpoint'."
-  (assert (equalp (not (cdr (assoc law cadlaw-ess-raw-alist))) nil) t
+  (assert (equalp (not (cdr (assoc (list law language) cadlaw-ess-raw-alist))) nil) t
           "XML has not finished downloading")
   ;; (when (not cadlaw-ess-raw))
-  (cdr (assoc 'Body (cdar (cadlaw--ess-get-law law)))))
+  (cdr (assoc 'Body (cdar (cadlaw--ess-get-law  law language)))))
 
 (defun cadlaw--list-to-string (list)
   "Convert a LIST to string.
@@ -150,14 +186,14 @@ E.g. ((sample \"A\") \" B\") -> \"A B\""
                     list
                     ""))))
 
-(defun cadlaw-ess-get-section (law section-label &optional searchable return-heading?)
+(defun cadlaw-ess-get-section (law language section-label &optional searchable return-heading?)
   "Get a single section from the Regulations.
 For the nested equivielent (i.e. normal use case) see `cadlaw-ess-get-section*'.
 SECTION-LABEL the name of the section as a string
 SEARCHABLE the ess to be searched, if not included it defaults to a call to
 `cadlaw--ess-get-body'
 RETURN-HEADING bool, if true return the related headings rather than the section"
-  (let* ((body (or searchable (cddr (cadlaw--ess-get-body law))))
+  (let* ((body (or searchable (cddr (cadlaw--ess-get-body law language))))
          (section (pop body))
          (heading nil)
          (ret nil))
@@ -178,13 +214,13 @@ RETURN-HEADING bool, if true return the related headings rather than the section
         heading
         ret)))
 
-(defun cadlaw-ess-get-section* (law &rest sections)
+(defun cadlaw-ess-get-section* (law language &rest sections)
   "Search through Regulations to find SECTIONS.
 SECTIONS are strings."
-  (let ((searchable (cadlaw--ess-get-body law))
+  (let ((searchable (cadlaw--ess-get-body law language))
         (section (pop sections)))
     (while section
-      (setq searchable (cadlaw-ess-get-section law section (cddr searchable)))
+      (setq searchable (cadlaw-ess-get-section law language section (cddr searchable)))
       (setq section (pop sections)))
     searchable))
 
@@ -511,24 +547,24 @@ FORMAT format to use, see `cadlaw-render-format-plist'"
                               (not (member (caddr label) paragraphs))))))
                    elements))))
 
-(defun cadlaw-insert (law section-string)
+(defun cadlaw-insert (law language section-string)
   "Interactive function for inserting LAW SECTION-STRING into current emacs buffer at point.
 SECTION-STRING example:\"1 (2) a-c\""
 
-    (interactive "sLaw: \nsSection: ")
+    (interactive "sLaw: \nsLanguage(eng|fre): \nsSection: ")
     (let* ((parsed (cadlaw--parse-section-string section-string))
           (section (plist-get parsed 'section))
           (subsection (when (plist-get parsed 'subsection)
                         (format "(%s)" (plist-get parsed 'subsection))))
           (from (plist-get parsed 'from))
           (to (plist-get parsed 'to))
-          (elements (cadlaw-ess-get-section* 'tpr section subsection)))
+          (elements (cadlaw-ess-get-section* law language section subsection)))
       (insert (cadlaw-apply-render (cadlaw--filter-paragraphs elements to from) "" 'emacs))))
 
-(defun cadlaw-insert-section (law section)
+(defun cadlaw-insert-section (law language section)
   "Interactive function for inserting LAW SECTION into current emacs buffer at point."
-  (interactive "sLaw: \nsSection: ")
-  (insert (cadlaw-apply-render (cadlaw-ess-get-section* (intern-soft law) section) "" 'emacs)))
+  (interactive "sLaw: \nsLanguage(eng|frn):\nsSection: ")
+  (insert (cadlaw-apply-render (cadlaw-ess-get-section* (intern-soft law) (intern-soft language) section) "" 'emacs)))
 
 (provide 'cadlaw)
 ;;; cadlaw.el ends here
